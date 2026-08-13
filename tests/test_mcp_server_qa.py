@@ -139,6 +139,78 @@ def test_get_ticket_success(monkeypatch):
     assert "Debe ser azul" in resultado
 
 
+# --- add_ticket_comment ---
+
+
+def test_text_to_adf_one_paragraph_per_nonblank_line():
+    adf = server._text_to_adf("Cumple.\n\nRazón: el botón es azul.")
+    assert adf == {
+        "type": "doc",
+        "version": 1,
+        "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": "Cumple."}]},
+            {
+                "type": "paragraph",
+                "content": [
+                    {"type": "text", "text": "Razón: el botón es azul."}
+                ],
+            },
+        ],
+    }
+
+
+def test_text_to_adf_empty_text_returns_empty_paragraph():
+    assert server._text_to_adf("") == {
+        "type": "doc",
+        "version": 1,
+        "content": [{"type": "paragraph", "content": []}],
+    }
+
+
+def test_add_ticket_comment_missing_credentials(monkeypatch):
+    monkeypatch.setattr(server, "JIRA_DOMAIN", None)
+    monkeypatch.setattr(server, "JIRA_EMAIL", None)
+    monkeypatch.setattr(server, "JIRA_API_TOKEN", None)
+    resultado = server.add_ticket_comment("SCRUM-1", "Cumple.")
+    assert "Faltan credenciales" in resultado
+
+
+def test_add_ticket_comment_not_found(monkeypatch):
+    monkeypatch.setattr(server, "JIRA_DOMAIN", "example.atlassian.net")
+    monkeypatch.setattr(server, "JIRA_EMAIL", "a@b.com")
+    monkeypatch.setattr(server, "JIRA_API_TOKEN", "token")
+    monkeypatch.setattr(server.requests, "post", lambda *a, **k: FakeResponse(404))
+    resultado = server.add_ticket_comment("SCRUM-999", "Cumple.")
+    assert "No se encontró ningún ticket" in resultado
+
+
+def test_add_ticket_comment_forbidden(monkeypatch):
+    monkeypatch.setattr(server, "JIRA_DOMAIN", "example.atlassian.net")
+    monkeypatch.setattr(server, "JIRA_EMAIL", "a@b.com")
+    monkeypatch.setattr(server, "JIRA_API_TOKEN", "token")
+    monkeypatch.setattr(server.requests, "post", lambda *a, **k: FakeResponse(403))
+    resultado = server.add_ticket_comment("SCRUM-1", "Cumple.")
+    assert "permisos" in resultado
+
+
+def test_add_ticket_comment_success(monkeypatch):
+    monkeypatch.setattr(server, "JIRA_DOMAIN", "example.atlassian.net")
+    monkeypatch.setattr(server, "JIRA_EMAIL", "a@b.com")
+    monkeypatch.setattr(server, "JIRA_API_TOKEN", "token")
+
+    captured = {}
+
+    def fake_post(url, auth=None, headers=None, json=None, timeout=None):
+        captured["json"] = json
+        return FakeResponse(201, json_data={"id": "10042"})
+
+    monkeypatch.setattr(server.requests, "post", fake_post)
+    resultado = server.add_ticket_comment("SCRUM-1", "Cumple.")
+    assert "Comentario agregado al ticket SCRUM-1" in resultado
+    assert "10042" in resultado
+    assert captured["json"]["body"]["content"][0]["content"][0]["text"] == "Cumple."
+
+
 # --- _open_page_with_element (helper compartido por las tools de Playwright) ---
 
 

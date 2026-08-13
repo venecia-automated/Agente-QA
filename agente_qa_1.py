@@ -114,17 +114,34 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Objetivo a testear: ruta a un .docx o URL de una página web",
     )
+    parser.add_argument(
+        "--no-comment",
+        action="store_true",
+        help=(
+            "No publicar el resultado como comentario en el ticket de Jira "
+            "(por defecto sí se publica)."
+        ),
+    )
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
+    instruccion_comentario = (
+        ""
+        if args.no_comment
+        else (
+            " Al terminar, publicá tu conclusión (cumple / no cumple / falta "
+            "información, con tu razonamiento) como comentario en el ticket "
+            "usando la tool add_ticket_comment."
+        )
+    )
     prompt = (
         f"Revisá el ticket {args.ticket} y comparalo contra este objetivo: "
         f"'{args.target}'. Usá las tools disponibles que correspondan según "
         "el tipo de criterio (visual, de comportamiento, de contenido, "
         "etc.). Decime si cumple, no cumple, o si falta información para "
-        "decidir, y explicá tu razonamiento."
+        "decidir, y explicá tu razonamiento." + instruccion_comentario
     )
     resultado = asyncio.run(run_agent(prompt))
     print("\n--- Resultado del Agente ---")

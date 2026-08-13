@@ -2,8 +2,9 @@
 mcp_server_qa.py
 
 Servidor MCP para el proyecto QA Agent.
-Expone cuatro tools:
+Expone cinco tools:
   - get_ticket: trae título y descripción de un ticket real de Jira
+  - add_ticket_comment: publica un comentario en un ticket real de Jira
   - get_target_content: lee el doc de Word que simula "la web" a testear
   - get_computed_style: abre una URL real con Playwright y devuelve
     TODAS las propiedades CSS computadas de un elemento
@@ -168,6 +169,75 @@ def get_ticket(ticket_id: str) -> str:
     descripcion = adf_to_text(fields.get("description")).strip() or "(sin descripción)"
 
     return f"Ticket: {ticket_id}\nTítulo: {titulo}\nDescripción: {descripcion}"
+
+
+def _text_to_adf(text: str) -> dict:
+    """
+    Convierte texto plano a un documento ADF mínimo: un párrafo por
+    línea no vacía. Es el inverso simplificado de adf_to_text -- Jira
+    Cloud exige que el body de un comentario venga en este formato,
+    no en texto plano.
+    """
+    parrafos = [
+        {"type": "paragraph", "content": [{"type": "text", "text": linea}]}
+        for linea in text.split("\n")
+        if linea.strip()
+    ] or [{"type": "paragraph", "content": []}]
+    return {"type": "doc", "version": 1, "content": parrafos}
+
+
+@mcp.tool()
+def add_ticket_comment(ticket_id: str, comment: str) -> str:
+    """
+    Publica un comentario en un ticket real de Jira, dado su ID (por
+    ejemplo 'SCRUM-1'). Usar esta tool al terminar la revisión para
+    dejar constancia en el ticket del resultado (cumple / no cumple /
+    falta información) junto con el razonamiento.
+
+    Args:
+        ticket_id: ID del ticket de Jira (ej: 'SCRUM-1').
+        comment: texto del comentario a publicar. Admite texto plano
+            con saltos de línea; cada línea no vacía se postea como
+            un párrafo separado.
+    """
+    if not (JIRA_DOMAIN and JIRA_EMAIL and JIRA_API_TOKEN):
+        return (
+            "Faltan credenciales de Jira en el .env "
+            "(JIRA_DOMAIN, JIRA_EMAIL, JIRA_API_TOKEN)."
+        )
+
+    url = f"https://{JIRA_DOMAIN}/rest/api/3/issue/{ticket_id}/comment"
+    try:
+        response = requests.post(
+            url,
+            auth=HTTPBasicAuth(JIRA_EMAIL, JIRA_API_TOKEN),
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            },
+            json={"body": _text_to_adf(comment)},
+            timeout=10,
+        )
+    except requests.RequestException as e:
+        return f"Error de conexión al comentar el ticket '{ticket_id}': {e}"
+
+    if response.status_code == 404:
+        return f"No se encontró ningún ticket con id '{ticket_id}'."
+    if response.status_code == 401:
+        return "No autorizado por Jira: revisá JIRA_EMAIL y JIRA_API_TOKEN en tu .env."
+    if response.status_code == 403:
+        return (
+            "Jira rechazó el comentario por permisos: revisá que el "
+            "usuario del .env tenga acceso para comentar en este proyecto."
+        )
+    if response.status_code not in (200, 201):
+        return (
+            f"Jira devolvió un error inesperado ({response.status_code}) "
+            f"al comentar el ticket: {response.text[:300]}"
+        )
+
+    comment_id = response.json().get("id", "?")
+    return f"Comentario agregado al ticket {ticket_id} (id de comentario: {comment_id})."
 
 
 @mcp.tool()

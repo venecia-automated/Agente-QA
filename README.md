@@ -59,6 +59,13 @@ El agente trae el ticket, decide qué tools usar según el tipo de
 criterio (visual, de comportamiento, de contenido), y responde si el
 objetivo cumple, no cumple, o si falta información para decidir.
 
+Por defecto, además, publica esa conclusión como comentario en el
+ticket de Jira (tool `add_ticket_comment`). Para desactivarlo:
+
+```bash
+python agente_qa_1.py --ticket SCRUM-1 --target https://ejemplo.com --no-comment
+```
+
 ## Tests
 
 ```bash
