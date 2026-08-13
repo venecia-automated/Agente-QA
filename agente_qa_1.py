@@ -30,14 +30,38 @@ def _extract_text(content) -> str:
     return "".join(block.text for block in content if block.type == "text")
 
 
-async def run_agent(user_prompt: str) -> str:
+async def _post_fallback_comment(client: MCPClient, ticket_id: str, mensaje: str) -> None:
+    """
+    Best-effort: cuando el agente no llega a una conclusión propia (se
+    corta por límite de iteraciones o por un error de la API), deja
+    igual una constancia concisa en el ticket en vez de fallar en
+    silencio. Si publicar el comentario también falla, solo se loguea.
+    """
+    try:
+        await client.call_tool(
+            "add_ticket_comment", {"ticket_id": ticket_id, "comment": mensaje}
+        )
+    except Exception as e:
+        print(f"[Agente] No se pudo publicar el comentario de fallback en Jira: {e!r}")
+
+
+async def run_agent(
+    user_prompt: str, ticket_id: str | None = None, post_comment: bool = True
+) -> str:
     client = MCPClient(SERVER_SCRIPT)
     await client.connect()
+
+    async def fallar(mensaje: str) -> str:
+        if ticket_id and post_comment:
+            await _post_fallback_comment(client, ticket_id, f"⚠️ {mensaje}")
+        return mensaje
 
     try:
         # Nada de esto sabe de MCP: solo pide "las tools" y "ejecutá esta tool"
         anthropic_tools = await client.list_tools()
         messages = [{"role": "user", "content": user_prompt}]
+        ultima_tool = None
+        ultimo_resultado = None
 
         for _ in range(MAX_ITERATIONS):
             try:
@@ -48,7 +72,7 @@ async def run_agent(user_prompt: str) -> str:
                     messages=messages,
                 )
             except anthropic.AnthropicError as e:
-                return f"Error al llamar a la API de Anthropic: {e}"
+                return await fallar(f"Error al llamar a la API de Anthropic: {e}")
 
             messages.append({"role": "assistant", "content": response.content})
 
@@ -70,10 +94,12 @@ async def run_agent(user_prompt: str) -> str:
                     continue
 
                 print(f"[Agente] Llamando tool '{block.name}' con input {block.input}")
+                ultima_tool = block.name
                 try:
                     result_text = await client.call_tool(block.name, block.input)
                 except Exception as e:
                     print(f"[Agente] Error ejecutando tool '{block.name}': {e!r}")
+                    ultimo_resultado = f"Error ejecutando la tool: {e}"
                     tool_results.append(
                         {
                             "type": "tool_result",
@@ -84,6 +110,7 @@ async def run_agent(user_prompt: str) -> str:
                     )
                     continue
 
+                ultimo_resultado = result_text
                 tool_results.append(
                     {
                         "type": "tool_result",
@@ -94,10 +121,16 @@ async def run_agent(user_prompt: str) -> str:
 
             messages.append({"role": "user", "content": tool_results})
 
-        return (
-            f"El agente alcanzó el límite de {MAX_ITERATIONS} iteraciones de "
-            "tool-use sin llegar a una respuesta final."
+        resumen_falla = (
+            f"No se pudo completar la revisión del ticket tras {MAX_ITERATIONS} "
+            "intentos de tool-use."
         )
+        if ultima_tool:
+            resumen_falla += (
+                f" Última tool usada: '{ultima_tool}'. Último resultado: "
+                f"{(ultimo_resultado or '(sin datos)')[:400]}"
+            )
+        return await fallar(resumen_falla)
     finally:
         await client.close()
 
@@ -155,6 +188,8 @@ if __name__ == "__main__":
         "no cumple, o si falta información para decidir, y explicá tu "
         "razonamiento." + instruccion_comentario
     )
-    resultado = asyncio.run(run_agent(prompt))
+    resultado = asyncio.run(
+        run_agent(prompt, ticket_id=args.ticket, post_comment=not args.no_comment)
+    )
     print("\n--- Resultado del Agente ---")
     print(resultado)

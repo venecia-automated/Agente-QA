@@ -227,9 +227,20 @@ class FakeLocator:
             raise TimeoutError("elemento no visible")
 
 
+class FakeHttpResponse:
+    def __init__(self, status=200, status_text="OK"):
+        self.status = status
+        self.status_text = status_text
+
+    @property
+    def ok(self):
+        return 200 <= self.status < 300
+
+
 class FakePage:
-    def __init__(self, locator):
+    def __init__(self, locator, response=None):
         self._locator = locator
+        self._response = response if response is not None else FakeHttpResponse()
         self.closed = False
         self.url = "about:blank"
 
@@ -238,6 +249,7 @@ class FakePage:
 
     async def goto(self, url, wait_until="load", timeout=0):
         self.url = url
+        return self._response
 
     async def close(self):
         self.closed = True
@@ -270,7 +282,18 @@ async def test_open_page_with_element_raises_and_closes_page_when_not_found():
     page = FakePage(locator)
     browser = FakeBrowser(page)
 
-    with pytest.raises(server.ElementNotFoundError):
+    with pytest.raises(server.PageInspectionError):
+        async with server._open_page_with_element(browser, "http://x", "#sel"):
+            pass
+    assert page.closed is True
+
+
+async def test_open_page_with_element_raises_on_http_error_without_checking_selector():
+    locator = FakeLocator(visible=False)  # ni siquiera llegaría a matchear
+    page = FakePage(locator, response=FakeHttpResponse(status=404, status_text="Not Found"))
+    browser = FakeBrowser(page)
+
+    with pytest.raises(server.PageInspectionError, match="error HTTP 404"):
         async with server._open_page_with_element(browser, "http://x", "#sel"):
             pass
     assert page.closed is True

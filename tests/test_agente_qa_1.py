@@ -68,7 +68,7 @@ async def test_run_agent_stops_at_max_iterations(monkeypatch):
     )
     resultado = await agente_qa_1.run_agent("chequeá el ticket X")
     assert calls["n"] == agente_qa_1.MAX_ITERATIONS
-    assert "límite" in resultado
+    assert "No se pudo completar la revisión" in resultado
 
 
 async def test_run_agent_handles_anthropic_error(monkeypatch):
@@ -102,6 +102,75 @@ async def test_run_agent_reports_tool_error_without_crashing(monkeypatch):
     )
     resultado = await agente_qa_1.run_agent("chequeá el ticket X")
     assert resultado == "listo"
+
+
+async def test_run_agent_posts_fallback_comment_on_max_iterations(monkeypatch):
+    fake_client = FakeMCPClient()
+    monkeypatch.setattr(agente_qa_1, "MCPClient", lambda *a, **k: fake_client)
+
+    response = _fake_response(
+        "tool_use", [_tool_use_block("get_computed_style", {"url": "https://x"})]
+    )
+    monkeypatch.setattr(
+        agente_qa_1.anthropic_client,
+        "messages",
+        SimpleNamespace(create=lambda **kw: response),
+    )
+    resultado = await agente_qa_1.run_agent(
+        "chequeá el ticket X", ticket_id="SCRUM-3", post_comment=True
+    )
+    assert "No se pudo completar la revisión" in resultado
+
+    fallback_calls = [
+        c for c in fake_client.call_tool.call_args_list if c.args[0] == "add_ticket_comment"
+    ]
+    assert len(fallback_calls) == 1
+    assert fallback_calls[0].args[1]["ticket_id"] == "SCRUM-3"
+    assert "intentos" in fallback_calls[0].args[1]["comment"]
+    assert "get_computed_style" in fallback_calls[0].args[1]["comment"]
+
+
+async def test_run_agent_posts_fallback_comment_on_anthropic_error(monkeypatch):
+    fake_client = FakeMCPClient()
+    monkeypatch.setattr(agente_qa_1, "MCPClient", lambda *a, **k: fake_client)
+
+    def raise_error(**kwargs):
+        raise anthropic.AnthropicError("boom")
+
+    monkeypatch.setattr(
+        agente_qa_1.anthropic_client, "messages", SimpleNamespace(create=raise_error)
+    )
+    resultado = await agente_qa_1.run_agent(
+        "chequeá el ticket X", ticket_id="SCRUM-3", post_comment=True
+    )
+    assert "Error al llamar a la API de Anthropic" in resultado
+
+    calls = fake_client.call_tool.call_args_list
+    assert len(calls) == 1
+    assert calls[0].args[0] == "add_ticket_comment"
+    assert calls[0].args[1]["ticket_id"] == "SCRUM-3"
+    assert "Anthropic" in calls[0].args[1]["comment"]
+
+
+async def test_run_agent_skips_fallback_comment_when_disabled(monkeypatch):
+    fake_client = FakeMCPClient()
+    monkeypatch.setattr(agente_qa_1, "MCPClient", lambda *a, **k: fake_client)
+
+    response = _fake_response(
+        "tool_use", [_tool_use_block("get_computed_style", {"url": "https://x"})]
+    )
+    monkeypatch.setattr(
+        agente_qa_1.anthropic_client,
+        "messages",
+        SimpleNamespace(create=lambda **kw: response),
+    )
+    resultado = await agente_qa_1.run_agent(
+        "chequeá el ticket X", ticket_id="SCRUM-3", post_comment=False
+    )
+    assert "No se pudo completar la revisión" in resultado
+    assert all(
+        c.args[0] != "add_ticket_comment" for c in fake_client.call_tool.call_args_list
+    )
 
 
 async def test_run_agent_handles_max_tokens(monkeypatch):

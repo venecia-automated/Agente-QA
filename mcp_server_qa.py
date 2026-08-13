@@ -72,8 +72,9 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
 mcp = FastMCP("qa-agent-tools", lifespan=app_lifespan)
 
 
-class ElementNotFoundError(Exception):
-    """El selector no matcheó ningún elemento visible a tiempo."""
+class PageInspectionError(Exception):
+    """La página no cargó (error HTTP) o el selector no matcheó ningún
+    elemento visible a tiempo."""
 
 
 @asynccontextmanager
@@ -87,17 +88,28 @@ async def _open_page_with_element(
     "ir a una URL y agarrar un elemento" (get_computed_style,
     check_link_redirect).
 
-    Lanza ElementNotFoundError si el elemento no aparece a tiempo.
-    Cierra la página (y su browser context) al salir del bloque.
+    Lanza PageInspectionError si la página respondió con un error HTTP
+    o si el elemento no aparece a tiempo -- para que quien llame pueda
+    distinguir "la URL está rota" de "el selector está mal", en vez de
+    reintentar selectores a ciegas. Cierra la página (y su browser
+    context) al salir del bloque.
     """
     page = await browser.new_page()
     try:
-        await page.goto(url, wait_until="load", timeout=20000)
+        response = await page.goto(url, wait_until="load", timeout=20000)
+        if response is not None and not response.ok:
+            raise PageInspectionError(
+                f"La página '{url}' respondió con error HTTP "
+                f"{response.status} ({response.status_text}); no se pudo "
+                f"inspeccionar el selector '{selector}' porque la página "
+                "no cargó contenido válido."
+            )
+
         locator = page.locator(selector).first
         try:
             await locator.wait_for(state="visible", timeout=10000)
         except Exception:
-            raise ElementNotFoundError(
+            raise PageInspectionError(
                 f"No se encontró ningún elemento visible que matchee "
                 f"el selector '{selector}' en '{url}'."
             )
@@ -293,6 +305,11 @@ async def get_computed_style(url: str, selector: str, ctx: Context) -> str:
     Usar esta tool para cualquier criterio de aceptación sobre el
     aspecto visual de una página web real (no un doc de Word).
 
+    Si `url` responde con un error HTTP (404, 500, etc.), la tool lo
+    reporta explícitamente en vez de decir "elemento no encontrado" --
+    en ese caso no tiene sentido reintentar con otro selector, el
+    problema es la URL.
+
     Args:
         url: URL completa de la página a inspeccionar
             (ej: 'https://ejemplo.com/login').
@@ -310,7 +327,7 @@ async def get_computed_style(url: str, selector: str, ctx: Context) -> str:
                 "for (const prop of s) { r[prop] = s.getPropertyValue(prop); } "
                 "return r; }"
             )
-    except ElementNotFoundError as e:
+    except PageInspectionError as e:
         return str(e)
     except Exception as e:
         print(f"[get_computed_style] error inesperado: {e!r}", file=sys.stderr)
@@ -337,6 +354,11 @@ async def check_link_redirect(url: str, selector: str, ctx: Context) -> str:
     atributo href del HTML porque en apps modernas (SPAs) la
     navegación suele manejarse por JavaScript, no por un link
     tradicional -- clickear de verdad es más confiable.
+
+    Si `url` responde con un error HTTP (404, 500, etc.), la tool lo
+    reporta explícitamente en vez de decir "elemento no encontrado" --
+    en ese caso no tiene sentido reintentar con otro selector, el
+    problema es la URL.
 
     Args:
         url: URL completa de la página donde está el elemento a clickear.
@@ -369,7 +391,7 @@ async def check_link_redirect(url: str, selector: str, ctx: Context) -> str:
                     pass  # puede que la URL no haya cambiado; lo reportamos igual
                 url_despues = page.url
                 abrio_pestana_nueva = False
-    except ElementNotFoundError as e:
+    except PageInspectionError as e:
         return str(e)
     except Exception as e:
         print(f"[check_link_redirect] error inesperado: {e!r}", file=sys.stderr)
