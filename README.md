@@ -53,6 +53,8 @@ El API token de Jira se genera en
 python agente_qa_1.py --ticket SCRUM-1 --target ./ruta/al/objetivo.docx
 # o contra una web real:
 python agente_qa_1.py --ticket SCRUM-1 --target https://ejemplo.com
+# o dejando que el agente saque la URL/ruta de la descripción del ticket:
+python agente_qa_1.py --ticket SCRUM-1
 ```
 
 El agente trae el ticket, decide qué tools usar según el tipo de

@@ -111,8 +111,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--target",
-        required=True,
-        help="Objetivo a testear: ruta a un .docx o URL de una página web",
+        required=False,
+        default=None,
+        help=(
+            "Objetivo a testear: ruta a un .docx o URL de una página web. "
+            "Si se omite, el agente intenta extraerlo de la descripción del ticket."
+        ),
     )
     parser.add_argument(
         "--no-comment",
@@ -136,12 +140,20 @@ if __name__ == "__main__":
             "usando la tool add_ticket_comment."
         )
     )
+    if args.target:
+        objetivo_instruccion = f"comparalo contra este objetivo: '{args.target}'"
+    else:
+        objetivo_instruccion = (
+            "extraé el objetivo a testear (una URL de una página web o la "
+            "ruta a un documento .docx) de la descripción del ticket, y "
+            "comparalo contra eso"
+        )
     prompt = (
-        f"Revisá el ticket {args.ticket} y comparalo contra este objetivo: "
-        f"'{args.target}'. Usá las tools disponibles que correspondan según "
-        "el tipo de criterio (visual, de comportamiento, de contenido, "
-        "etc.). Decime si cumple, no cumple, o si falta información para "
-        "decidir, y explicá tu razonamiento." + instruccion_comentario
+        f"Revisá el ticket {args.ticket} y {objetivo_instruccion}. Usá las "
+        "tools disponibles que correspondan según el tipo de criterio "
+        "(visual, de comportamiento, de contenido, etc.). Decime si cumple, "
+        "no cumple, o si falta información para decidir, y explicá tu "
+        "razonamiento." + instruccion_comentario
     )
     resultado = asyncio.run(run_agent(prompt))
     print("\n--- Resultado del Agente ---")
